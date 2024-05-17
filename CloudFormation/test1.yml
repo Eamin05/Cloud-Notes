@@ -1,0 +1,101 @@
+Resources:
+  # Web Tier
+  MyS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+
+  MyCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !GetAtt MyS3Bucket.DomainName
+            Id: S3Origin
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+
+        Enabled: true
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ForwardedValues:
+            QueryString: false
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+
+  MyLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: arn:aws:iam::123456789012:role/lambda-role
+      FunctionName: my-function
+      Code:
+        S3Bucket: my-lambda-code-bucket
+        S3Key: function.zip
+      Runtime: nodejs12.x
+
+  MyApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MyAPI
+
+  MyApiGatewayResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      ParentId: !GetAtt MyApiGateway.RootResourceId
+      PathPart: 'myresource'
+
+  MyApiGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      ResourceId: !Ref MyApiGatewayResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MyLambdaFunction.Arn}/invocations
+
+  MyApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: MyApiGatewayMethod
+    Properties:
+      RestApiId: !Ref MyApiGateway
+
+  MyCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: example.com
+      DomainValidationOptions:
+        - DomainName: example.com
+          ValidationDomain: example.com
+
+  MyApiGatewayDomainName:
+    Type: AWS::ApiGateway::DomainName
+    Properties:
+      CertificateArn: !Ref MyCertificate
+      DomainName: example.com
+
+  MyApiGatewayBasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Properties:
+      DomainName: !Ref MyApiGatewayDomainName
+      RestApiId: !Ref MyApiGateway
+
+  # Database Tier
+  MyDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      DBInstanceClass: db.t2.micro
+      Engine: mysql
+      MasterUsername: admin
+      MasterUserPassword: password
+
+Outputs:
+  WebsiteURL:
+    Value: !Sub 'https://${MyApiGatewayDomainName.DomainName}'
